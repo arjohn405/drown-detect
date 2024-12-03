@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drowsiness Detection</title>
+    <style>
+        body {
+            text-align: center;
+            font-family: Arial, sans-serif;
+        }
+        #video-container {
+            margin-top: 20px;
+            display: inline-block;
+        }
+        img {
+            width: 80%;
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Drowsiness Detection System</h1>
+    <div id="video-container">
+        <h2>Real-Time Video Feed</h2>
+        <img src="{{ url_for('video_feed') }}" alt="Video feed">
+    </div>
+    <p>Warning: If the system detects drowsiness, an alarm will be triggered!</p>
+</body>
+</html>
