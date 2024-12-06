@@ -32,16 +32,13 @@ def calculate_mar(mouth):
 
 # Thresholds
 EAR_THRESHOLD = 0.25
-MAR_THRESHOLD = 0.6  # Threshold for yawning detection (adjust as needed)
+MAR_THRESHOLD = 0.6
 CONSECUTIVE_FRAMES = 20
 YAWN_WARNING_FRAMES = 30
-BLINK_WARNING_FRAMES = 50
 
 # Counters
 frame_count = 0
-blink_count = 0
 yawn_frame_count = 0
-frequent_blink_frame_count = 0
 
 # Initialize decision tree classifier
 dt_clf = DecisionTreeClassifier()
@@ -55,50 +52,43 @@ dt_clf.fit(X_train, y_train)
 detector = dlib.get_frontal_face_detector()
 predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
 
+# Gender detection model
+gender_net = cv2.dnn.readNetFromCaffe(
+    "deploy_gender.prototxt",  # Path to gender model prototxt
+    "gender_net.caffemodel"    # Path to pre-trained gender model weights
+)
+GENDER_LIST = ['Male', 'Female']
+
 # Get indexes of left and right eye landmarks
 LEFT_EYE_INDEXES = list(range(36, 42))
 RIGHT_EYE_INDEXES = list(range(42, 48))
 MOUTH_INDEXES = list(range(48, 68))
 
-# Start video capture
-cap = cv2.VideoCapture(0)
-
 # Real-time variables for precision and recall calculation
 y_true = []
 y_pred = []
 
-# CSV file for storing precision and recall scores
-csv_file = "precision_recall_scores.csv"
-# Write the header to the CSV file if it doesn't exist
-if not os.path.exists(csv_file):
-    with open(csv_file, mode='w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(["Timestamp", "Precision", "Recall"])
-
-# Matplotlib figure for plotting
-plt.ion()  # Turn on interactive mode for real-time plotting
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+# Matplotlib setup for real-time graphs
+plt.ion()  # Turn on interactive mode for live updates
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
 precision_data = []
 recall_data = []
-time_data = []
 
-# Function to update plot
+# Function to update precision and recall graphs
 def update_plot():
     ax1.clear()
     ax2.clear()
-    ax1.plot(range(len(precision_data)), precision_data, label='Precision', color='blue')
-    ax2.plot(range(len(recall_data)), recall_data, label='Recall', color='green')
-
+    ax1.plot(precision_data, label="Precision", color="blue")
+    ax2.plot(recall_data, label="Recall", color="green")
     ax1.set_title("Precision over Time")
     ax2.set_title("Recall over Time")
     ax1.legend()
     ax2.legend()
-    ax1.set_xlabel('Time (frames)')
-    ax2.set_xlabel('Time (frames)')
-    ax1.set_ylabel('Precision')
-    ax2.set_ylabel('Recall')
     plt.draw()
-    plt.pause(0.1)
+    plt.pause(0.01)
+
+# Start video capture
+cap = cv2.VideoCapture(0)
 
 while True:
     ret, frame = cap.read()
@@ -111,12 +101,27 @@ while True:
     faces = detector(gray)
 
     for face in faces:
-        landmarks = predictor(gray, face)
+        x, y, w, h = (face.left(), face.top(), face.width(), face.height())
+
+        # Extract face ROI for gender detection
+        face_roi = frame[y:y + h, x:x + w].copy()
+        blob = cv2.dnn.blobFromImage(face_roi, 1.0, (227, 227), (78.42, 87.76, 114.89), swapRB=False)
+        gender_net.setInput(blob)
+        gender_preds = gender_net.forward()
+        gender = GENDER_LIST[gender_preds[0].argmax()]
+
+        # Display gender
+        cv2.putText(frame, f"Gender: {gender}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
         # Extract landmarks for eyes and mouth
+        landmarks = predictor(gray, face)
         left_eye = [(landmarks.part(n).x, landmarks.part(n).y) for n in LEFT_EYE_INDEXES]
         right_eye = [(landmarks.part(n).x, landmarks.part(n).y) for n in RIGHT_EYE_INDEXES]
         mouth = [(landmarks.part(n).x, landmarks.part(n).y) for n in MOUTH_INDEXES]
+
+        # Draw landmark dots
+        for point in left_eye + right_eye + mouth:
+            cv2.circle(frame, point, 2, (0, 255, 0), -1)
 
         # Calculate EAR and MAR
         left_ear = calculate_ear(left_eye)
@@ -126,16 +131,10 @@ while True:
 
         # Decision Tree for blinking classification
         prediction = dt_clf.predict([[ear]])
-
-        # Append predicted and true values (simulated true values)
-        y_true.append(1 if ear < EAR_THRESHOLD else 0)  # Assuming drowsiness based on EAR threshold
+        y_true.append(1 if ear < EAR_THRESHOLD else 0)
         y_pred.append(prediction[0])
 
-        # Blink counting
-        if prediction == 1:
-            blink_count += 1
-
-        # Check for drowsiness (based on EAR)
+        # Drowsiness detection
         if ear < EAR_THRESHOLD:
             frame_count += 1
             if frame_count >= CONSECUTIVE_FRAMES:
@@ -146,53 +145,29 @@ while True:
             frame_count = 0
             pygame.mixer.music.stop()
 
-        # Frequent blinking warning
-        if blink_count > 5 and frequent_blink_frame_count < BLINK_WARNING_FRAMES:
-            cv2.putText(frame, "Frequent Blinking Detected!", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-            frequent_blink_frame_count += 1
-        else:
-            frequent_blink_frame_count = 0
-
-        # Yawning detection based on MAR
+        # Yawning detection
         if mar > MAR_THRESHOLD:
             yawn_frame_count += 1
             if yawn_frame_count >= YAWN_WARNING_FRAMES:
-                cv2.putText(frame, "YAWNING DETECTED!", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, "YAWNING DETECTED!", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 if not pygame.mixer.music.get_busy():
                     pygame.mixer.music.play(-1)
         else:
             yawn_frame_count = 0
 
-        # Draw eye and mouth landmarks
-        for point in left_eye + right_eye + mouth:
-            cv2.circle(frame, point, 2, (0, 255, 0), -1)
-
-    # Display frame
-    cv2.imshow("Drowsiness and Yawn Detection", frame)
-
-    # Break loop on 'q' key
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-    # Calculate and save Precision and Recall periodically
-    if len(y_true) > 10:  # Calculate after 10 frames of data
-        precision = precision_score(y_true, y_pred)
-        recall = recall_score(y_true, y_pred)
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-
-        # Save to CSV
-        with open(csv_file, mode='a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow([timestamp, precision, recall])
-
-        # Append precision and recall to data lists for plotting
+    # Precision and recall calculation
+    if len(y_true) > 1:
+        precision = precision_score(y_true, y_pred, zero_division=1)
+        recall = recall_score(y_true, y_pred, zero_division=1)
         precision_data.append(precision)
         recall_data.append(recall)
-
-        print(f"Precision: {precision:.2f}, Recall: {recall:.2f}")
-
-        # Update the plot
         update_plot()
+
+    # Display frame
+    cv2.imshow("Drowsiness, Yawn, Gender Detection with Graphs", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
 # Release resources
 cap.release()
